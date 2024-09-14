@@ -1,128 +1,72 @@
-import asyncio
-import aiohttp
+import requests
 from bs4 import BeautifulSoup
 import csv
 import time
-import re
-import unidecode  # Import the unidecode package to normalize text
-from newspaper import Article  # Import the Article class from newspaper3k
+from newspaper import Article
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib
+import textwrap
+from unidecode import unidecode
+
 
 class NewsScraperIndia:
-    def __init__(self):
-        self.sources = {
-            "Times of India": {
-                "url": "https://timesofindia.indiatimes.com/briefs",
-                "article_selector": ".brief_box h2 a",
-            },
-            "NDTV": {
-                "url": "https://www.ndtv.com/latest",
-                "article_selector": ".news_Itm-cont h2 a",
-            },
-            "The Hindu": {
-                "url": "https://www.thehindu.com/latest-news/",
-                "article_selector": ".title a",
-            },
-        }
-        # Regex to detect Hindi text (Devanagari script)
-        self.hindi_regex = re.compile(r'[\u0900-\u097F]')
-
-    async def fetch(self, session, url):
-        async with session.get(url) as response:
-            return await response.text()
-
-    def clean_content(self, content):
-        """Format content by removing irregular characters, extra spaces, newlines, and truncating if necessary."""
-        # Remove irregular characters using unidecode to normalize text
-        content = unidecode.unidecode(content)
-        
-        # Remove extra spaces and newlines
-        content = re.sub(r'\s+', ' ', content.strip())
-
-        # Truncate content to 500 characters
-        return content
-
-    def is_hindi(self, text):
-        """Check if the text contains Hindi (Devanagari script) characters."""
-        return bool(self.hindi_regex.search(text))
-
-    def extract_with_newspaper(self, url):
-        """Extract content from the article using the newspaper3k library."""
-        article = Article(url)
-        article.download()
-        article.parse()
-        return self.clean_content(article.text)
-
-    async def scrape_article(self, session, source_name, article_url):
+    def extract_article_content(self, url):
+        """Extract article content from a given URL."""
         try:
-            if source_name == "Times of India":
-                article_url = "https://timesofindia.indiatimes.com/" + article_url
-
-            # Extract and clean content using newspaper3k
-            content = self.extract_with_newspaper(article_url)
-
-            # Skip if content is in Hindi
-            if self.is_hindi(content):
-                print(f"Skipping Hindi article: {article_url}")
-                return None
-
-            return {
-                "source": source_name,
-                "url": article_url,
-                "content": content,  # Truncated and cleaned content
-            }
+            article = Article(url)
+            article.download()
+            article.parse()
+            content = article.text
+            # Use unidecode to handle character encoding issues
+            decoded_content = unidecode(content)
+            # Format content with line breaks
+            formatted_content = "\n".join(textwrap.wrap(decoded_content, width=500))
+            return {"url": url, "content": formatted_content}
         except Exception as e:
-            print(f"Error scraping article {article_url}: {str(e)}")
-            return None
+            print(f"Error extracting content from {url}: {e}")
+            return {"url": url, "content": None}
 
-    async def scrape_source(self, session, name, info):
-        try:
-            html = await self.fetch(session, info["url"])
-            soup = BeautifulSoup(html, "html.parser")
-            articles = soup.select(info["article_selector"])
+    def scrape_term(self, term):
+        url = f"https://www.google.com/search?q={term}&tbm=nws"
+        response = requests.get(url)
+        soup = BeautifulSoup(response.content, "html.parser")
+        links = soup.select('a[data-ved^="2ahUKE"]')
+        links_ex = [
+            link.get("href").removeprefix("/url?q=").split("&", 1)[0] for link in links
+        ]
+        print(links_ex)
+        return links_ex
 
-            tasks = []
-            for article in articles:  # Limit to 20 articles per source
-                article_url = article["href"]
-                if not article_url.startswith("http"):
-                    article_url = (
-                        "https:" + article_url
-                        if article_url.startswith("//")
-                        else "https://" + re.sub(r"^/+", "", article_url)
-                    )
+    def scrape(self, term):
+        term = urllib.parse.quote(term)
+        links = self.scrape_term(term)
+        data = []
 
-                # Skip if the article title is in Hindi
-                if self.is_hindi(article.text):
-                    print(f"Skipping Hindi article: {article_url}")
-                    continue
-
-                task = self.scrape_article(session, name, article_url)
-                tasks.append(task)
-
-            return await asyncio.gather(*tasks)
-        except Exception as e:
-            print(f"Error scraping {name}: {str(e)}")
-            return []
-
-    async def scrape_all_sources(self):
-        async with aiohttp.ClientSession() as session:
-            tasks = [
-                self.scrape_source(session, name, info)
-                for name, info in self.sources.items()
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [
+                executor.submit(self.extract_article_content, link) for link in links
             ]
-            results = await asyncio.gather(*tasks)
-            return [item for sublist in results for item in sublist if item]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    data.append(result)
+
+        return data
 
     def save_to_csv(self, data, filename="indian_news.csv"):
         with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-            fieldnames = ["source", "url", "content"]
+            fieldnames = ["url", "content"]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             for article in data:
-                writer.writerow(article)
+                if article and article["content"]:  # Skip None values and empty content
+                    writer.writerow(article)
 
-    def run(self):
+    def run(self, term="latest"):
         start_time = time.time()
-        results = asyncio.run(self.scrape_all_sources())
+
+        results = self.scrape(term)
+
         end_time = time.time()
 
         self.save_to_csv(results)
@@ -134,4 +78,4 @@ class NewsScraperIndia:
 
 if __name__ == "__main__":
     scraper = NewsScraperIndia()
-    scraper.run()
+    scraper.run("donald trump")
