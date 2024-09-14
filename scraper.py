@@ -1,13 +1,12 @@
 import requests
 from bs4 import BeautifulSoup
-import csv
 import time
 from newspaper import Article
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib
 import textwrap
 from unidecode import unidecode
-import pandas as pd
+import json
 
 class NewsScraperIndia:
     def extract_article_content(self, url):
@@ -30,10 +29,10 @@ class NewsScraperIndia:
             # Use unidecode to handle character encoding issues
             decoded_content = unidecode(content)
             
-            # Format content with line breaks for better readability
-            formatted_content = "\n".join(textwrap.wrap(decoded_content, width=500))
+            # Remove any line breaks for single-line content
+            single_line_content = " ".join(decoded_content.split())
             
-            return {"url": url, "content": formatted_content}
+            return {"url": url, "content": single_line_content}
         except Exception as e:
             print(f"Error extracting content from {url}: {e}")
             return {"url": url, "content": None}
@@ -94,18 +93,19 @@ class NewsScraperIndia:
             term (str): The search term for scraping news articles.
         
         Returns:
-            tuple: A tuple containing the results as a DataFrame and the runtime as a string.
+            tuple: A tuple containing the results as a JSON object and the runtime as a string.
         """
         start_time = time.time()
 
         results = self.scrape(term)
-        results_df = pd.DataFrame(results)  # Store results in DataFrame
+        
+        # Convert results to JSON format
+        results_json = json.dumps(results, ensure_ascii=False, indent=4)
 
         end_time = time.time()
         
         runtime = f"{end_time - start_time:.2f} seconds"
         print(f"Scraped {len(results)} articles.")
-        print(f"Total time taken: {end_time - start_time:.2f} seconds")
-        print("Results saved to indian_news.csv")
+        print(f"Total time taken: {runtime}")
         
-        return results_df, runtime
+        return results_json, runtime
