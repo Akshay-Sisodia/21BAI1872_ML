@@ -93,14 +93,20 @@ class NewsScraperIndia:
             term (str): The search term for scraping news articles.
 
         Returns:
-            tuple: A tuple containing the results as a JSON object and the runtime as a string.
+            tuple: A tuple containing the results as a JSON object (which includes the search term) and the runtime as a string.
         """
         start_time = time.time()
 
         results = self.scrape(term)
 
-        # Convert results to JSON format
-        results_json = json.dumps(results, ensure_ascii=False, indent=4)
+        # Combine the search term and results into a single dictionary
+        result_data = {
+            "search_term": term,
+            "articles": results
+        }
+
+        # Convert the combined data to JSON format
+        results_json = json.dumps(result_data, ensure_ascii=False, indent=4)
 
         end_time = time.time()
 
