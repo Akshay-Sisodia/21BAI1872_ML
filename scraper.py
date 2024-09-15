@@ -8,7 +8,7 @@ from unidecode import unidecode
 import json
 
 
-class NewsScraperIndia:
+class NewsScraper:
     def extract_article_content(self, url):
         """
         Extract article content from a given URL using the newspaper3k library.
@@ -56,7 +56,6 @@ class NewsScraperIndia:
         links_ex = [
             link.get("href").removeprefix("/url?q=").split("&", 1)[0] for link in links
         ]
-        print(links_ex)
         return links_ex
 
     def scrape(self, term):
@@ -100,10 +99,7 @@ class NewsScraperIndia:
         results = self.scrape(term)
 
         # Combine the search term and results into a single dictionary
-        result_data = {
-            "search_term": term,
-            "articles": results
-        }
+        result_data = {"search_term": term, "articles": results}
 
         # Convert the combined data to JSON format
         results_json = json.dumps(result_data, ensure_ascii=False, indent=4)
