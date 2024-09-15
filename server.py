@@ -1,15 +1,15 @@
 import time
 import logging
 import httpx
+import json
+import numpy as np
+import redis
 from fastapi import FastAPI, HTTPException, Query, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
-import json
-import subprocess
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,9 +20,9 @@ app = FastAPI()
 # Initialize SentenceTransformer model for request similarity checking
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Cache for storing previous requests and responses
-request_cache = []
+# Initialize Redis client
 MAX_CACHE_SIZE = 100
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 # Dictionary to track user request counts
 user_request_counts = defaultdict(int)
@@ -36,23 +36,7 @@ class SearchQuery(BaseModel):
     top_k: int = Query(5, gt=0)
     threshold: float = Query(0.5, ge=0.0, le=1.0)
     user_id: str
-
-def start_servers():
-    # Start scraper server
-    subprocess.Popen(["python", "scraper_server.py"])
-    logger.info("Scraper server started")
-
-    # Start db server
-    subprocess.Popen(["python", "db_server.py"])
-    logger.info("DB server started")
-
-    # Wait for servers to initialize
-    time.sleep(5)
-
-@app.on_event("startup")
-def startup_event():
-    start_servers()
-
+    
 @app.on_event("shutdown")
 def shutdown_event():
     http_client.close()
@@ -93,23 +77,31 @@ def search_database(query: SearchQuery):
     return search_response.json()['results']
 
 def check_request_similarity(new_request, threshold=0.95):
-    if not request_cache:
+    cached_response = redis_client.get(new_request)
+    if cached_response:
+        return cached_response
+    
+    if not redis_client.exists("embeddings"):
         return None
-    
+
     new_embedding = model.encode([new_request], show_progress_bar=False)
-    cache_embeddings = model.encode([req['request'] for req in request_cache], show_progress_bar=False)
-    
+    cache_embeddings = json.loads(redis_client.get("embeddings"))
+
+    cache_embeddings = np.array(cache_embeddings)
     similarities = cosine_similarity(new_embedding, cache_embeddings)[0]
     most_similar_idx = np.argmax(similarities)
     
     if similarities[most_similar_idx] > threshold:
-        return request_cache[most_similar_idx]['response']
+        return redis_client.get(f"response:{most_similar_idx}")
     return None
 
 def update_cache(request, response):
-    request_cache.append({'request': request, 'response': response})
-    if len(request_cache) > MAX_CACHE_SIZE:
-        request_cache.pop(0)
+    redis_client.set(request, response)
+    cache_keys = redis_client.keys("response:*")
+    if len(cache_keys) >= MAX_CACHE_SIZE:
+        redis_client.delete(cache_keys[0])
+    redis_client.set(f"response:{len(cache_keys)}", response)
+    redis_client.rpush("requests", request)
 
 @app.post("/get_context")
 def get_context(query: SearchQuery):
