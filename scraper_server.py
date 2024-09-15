@@ -1,28 +1,29 @@
-from flask import Flask, jsonify, request
+from fastapi import FastAPI, Query, HTTPException
+from pydantic import BaseModel
 from scraper import NewsScraper  # Adjust import as necessary
 
-app = Flask(__name__)
+app = FastAPI()
 scraper = NewsScraper()
 
-@app.route('/status', methods=['GET'])
-def status():
+@app.get("/status")
+async def status():
     """
     Status endpoint to check if the service is running.
     """
-    return jsonify({"status": "Service is up and running"}), 200
+    return {"status": "Service is up and running"}
 
-@app.route('/search', methods=['GET'])
-def search():
+@app.get("/search")
+async def search(term: str = Query("latest", description="Search term for news articles")):
     """
     Search endpoint to scrape news articles based on a search term.
     Expects a query parameter 'term' for the search term.
     """
-    term = request.args.get('term', 'latest')
     if not term:
-        return jsonify({"error": "Missing 'term' query parameter"}), 400
+        raise HTTPException(status_code=400, detail="Missing 'term' query parameter")
 
     results_json, runtime = scraper.run(term)
-    return jsonify({"results": results_json, "runtime": runtime}), 200
+    return {"results": results_json, "runtime": runtime}
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
