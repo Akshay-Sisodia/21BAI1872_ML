@@ -1,8 +1,8 @@
-import cudf
-from cuml.neighbors import NearestNeighbors
-import cupy as cp
 import numpy as np
-from cuml.metrics.pairwise_distances import pairwise_distances
+from sentence_transformers import SentenceTransformer
+import logging
+import json
+import torch
 from pymilvus import (
     connections,
     FieldSchema,
@@ -11,55 +11,41 @@ from pymilvus import (
     Collection,
     utility,
 )
-from sentence_transformers import SentenceTransformer
-import logging
-import json
-import torch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Check if CUDA is available
+USE_GPU = True
+
+from sklearn.metrics.pairwise import pairwise_distances
+
+# Use GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+
+
 class VectorSimilarityRanker:
-    def __init__(self, metric='cosine'):
+    def __init__(self, metric="cosine"):
         self.metric = metric
 
     def rank(self, embeddings):
-        # Ensure we're working with a numpy array
-        if isinstance(embeddings, cudf.DataFrame):
-            embeddings = embeddings.to_numpy()
-        elif isinstance(embeddings, cp.ndarray):
-            embeddings = cp.asnumpy(embeddings)
-        
-        # Compute similarity matrix using cuML's pairwise_distances
+        # CPU version
         similarity_matrix = pairwise_distances(embeddings, metric=self.metric)
-        
-        # Compute ranking scores (lower distance means higher similarity)
         ranking_scores = np.sum(similarity_matrix, axis=1)
-        
-        # Sort embeddings based on ranking scores (ascending order for distances)
         sorted_indices = np.argsort(ranking_scores)
-        
+
         return sorted_indices
 
+
 class MilvusHelper:
-    def __init__(self, host="localhost", port="19530", collection_name="news_articles"):
+    def __init__(self, host="milvus", port="19530", collection_name="news_articles"):
         self.host = host
         self.port = port
         self.collection_name = collection_name
         self.collection = None
         self.model = SentenceTransformer(
-            "all-MiniLM-L6-v2", device="cuda" if torch.cuda.is_available() else "cpu"
-        )
-        self.ranker = VectorSimilarityRanker()
-    
-class MilvusHelper:
-    def __init__(self, host="localhost", port="19530", collection_name="news_articles"):
-        self.host = host
-        self.port = port
-        self.collection_name = collection_name
-        self.collection = None
-        self.model = SentenceTransformer(
-            "all-MiniLM-L6-v2", device="cuda" if torch.cuda.is_available() else "cpu"
+            "all-MiniLM-L6-v2", device="cuda" if USE_GPU else "cpu"
         )
         self.ranker = VectorSimilarityRanker()
 
@@ -135,7 +121,7 @@ class MilvusHelper:
                     [e[2] for e in ranked_entities],  # content
                     [e[3] for e in ranked_entities],  # embedding
                 ]
-                
+
                 self.collection.insert(insert_data)
                 self.collection.flush()  # Ensure data is flushed to storage
                 logger.info(
@@ -166,7 +152,9 @@ class MilvusHelper:
             distances = np.array([hit.distance for hit in results[0]])
             max_distance = np.max(distances)
             min_distance = np.min(distances)
-            normalized_distances = (distances - min_distance) / (max_distance - min_distance)
+            normalized_distances = (distances - min_distance) / (
+                max_distance - min_distance
+            )
 
             # Filter results based on the normalized threshold
             filtered_results = []
@@ -176,7 +164,9 @@ class MilvusHelper:
                 if len(filtered_results) == top_k:
                     break
 
-            logger.info(f"Search completed. Found {len(filtered_results)} results within the threshold.")
+            logger.info(
+                f"Search completed. Found {len(filtered_results)} results within the threshold."
+            )
             return filtered_results
         except Exception as e:
             logger.error(f"Search failed: {e}")

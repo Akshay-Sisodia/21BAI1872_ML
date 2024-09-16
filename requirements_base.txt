@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+httpx
+redis
+pymilvus
+sentence-transformers
+scikit-learn
+numpy
+torch
+pydantic
+beautifulsoup4
+newspaper3k
+lxml_html_clean
+unidecode
